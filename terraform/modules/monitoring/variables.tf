@@ -29,5 +29,5 @@ variable "monthly_budget_amount"{
 
 variable "subscription_id" {
     description = "Azure subscription ID"
-    type        = strin
+    type        = string
 }
