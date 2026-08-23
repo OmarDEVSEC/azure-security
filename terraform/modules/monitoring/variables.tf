@@ -2,6 +2,9 @@
 
 // Monitoring variables
 
+//Variables without default (resource_group_name, alert_email, 
+// subscription_id) are required — the module call must supply them, or terraform plan errors immediately
+
 variable "resource_group_name"{
     description = "Resource group this modules resources belong to"
     type        = string
