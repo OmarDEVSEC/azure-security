@@ -5,7 +5,7 @@ End-to-end Azure security modules: Deployed via Terraform, Defender for Cloud, K
 ## Setup notes
 
 While configuring authenticatrion, 'az login' returned an 'AADSTS50076' error requiring MFA on the tenant.
-Seperatly, the Azure subscription had moved to a 'Disabled' state after the free-tier credit expired.
+Seperately, the Azure subscription had moved to a 'Disabled' state after the free-tier credit expired.
 
 Fixed by the following:
 
