@@ -1,3 +1,5 @@
+//Create variabels for Azure static web app
+
 variable "resource_group_name" {
     description =       "Resource group static web app belongs to"
     type        =        string
