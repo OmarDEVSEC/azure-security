@@ -14,8 +14,8 @@ variable "site_name"{
 }
 
 
-variable "sku_teir"{
-    description =         "Pricing teir for the static web app Free or Premium"
+variable "sku_tier"{
+    description =         "Pricing tier for the static web app Free or Premium"
     type        =          string
     default     =          "Free"
 }
