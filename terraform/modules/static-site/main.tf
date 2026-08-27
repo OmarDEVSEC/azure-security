@@ -1,6 +1,5 @@
 //Create resource and set varibale to the resource for Azure static web app
 
-
 resource "azurerm_static_site" "main"{
     name                   =           var.site_name
     resource_group_name    =           var.resource_group_name
@@ -9,3 +8,4 @@ resource "azurerm_static_site" "main"{
     sku_size               =           var.sku_tier
 
 }
+
