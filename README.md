@@ -35,3 +35,66 @@ The monitoring module provides subscription-wide cost and service health oversig
 ![Monitoring resources deployed in Azure portal](docs/monitoring-resources.png)
 
 *Action group and service health alert rule deployed to `rg-monitoring`, confirmed via Azure portal.*
+
+
+# Static Web App Module
+
+Brings the existing, already-live portfolio site (`omardevsec.pro`) under Terraform management via `terraform import`, rather than redeploying it from scratch — this preserves the live site, its GitHub Actions deployment pipeline, and its history.
+
+**What it manages:**
+- `azurerm_static_web_app` resource, imported from an existing Static Web App originally created manually in the Azure portal
+- Tags (`PersonalSite = "1"`) brought into the config to match the real resource exactly, avoiding drift
+
+**Design decision — resource type migration:**
+The original plan used `azurerm_static_site`, but the first `terraform plan` after import surfaced a deprecation warning: `azurerm_static_site` is deprecated in favor of `azurerm_static_web_app` and will be removed in a future provider release. Since this was still early in bringing the resource under management, the resource type was migrated immediately rather than building on a deprecated type.
+
+## Setup notes / troubleshooting log
+
+A running log of real issues hit during this project and how they were resolved — kept intentionally rather than only showing a clean end state.
+
+**MFA and subscription authentication**
+`az login` initially failed with `AADSTS50076`, requiring multi-factor authentication on the tenant. Separately, the Azure subscription had moved to a `Disabled` state after the free-tier credit expired.
+
+Resolved by:
+- Enrolling in Azure AD MFA through the Azure portal
+- Upgrading the subscription to Pay-As-You-Go to reactivate it
+- Confirming `az account show` returned an active, enabled subscription before proceeding with Terraform
+
+This is also why the monitoring module (budget alerts, service health alerts) was deployed first, before any other lab infrastructure — to guard against unexpected spend now that the subscription bills for real.
+
+**Duplicate `required_providers` block**
+Terraform errored with `Duplicate required providers configuration` after a `required_providers` block for the `docker` provider was added directly to `main.tf`, conflicting with the existing `required_providers` block in `terraform.tf`. Terraform only allows one `required_providers` block per module, combined across all files.
+
+Resolved by consolidating both provider declarations into a single block in `terraform.tf`:
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "5.87.0"
+    }
+    docker = {
+      source = "kreuzwerker/docker"
+    }
+  }
+}
+```
+
+**Static Web App import — deprecated resource type**
+After successfully running `terraform import` against the live Static Web App using `azurerm_static_site`, `terraform plan` returned:
+```
+Warning: Deprecated Resource
+This resource has been deprecated in favour of `azurerm_static_web_app` and will be removed in a future release.
+```
+The same plan also revealed a real drift: an existing `PersonalSite = "1"` tag on the live resource wasn't declared in Terraform, which would have caused `apply` to delete it.
+
+Resolved by:
+1. Adding the missing tag into the resource block so Terraform's config matched reality
+2. Migrating the resource type from `azurerm_static_site` to `azurerm_static_web_app`
+3. Removing the old resource from state (`terraform state rm`) and re-importing under the new resource type
+4. Confirming a clean `terraform plan` — "No changes" — before running `apply`, since this is a live, public-facing resource rather than disposable lab infrastructure
+
+**General debugging habits established**
+- `terraform validate` is the authoritative check when an editor's inline error panel (e.g. VS Code's Terraform extension) shows stale or conflicting errors after a file edit
+- Empty module files can pass `terraform init` and `validate` cleanly while producing an incomplete `plan` — worth directly `cat`-ing files to confirm actual saved content when a plan's resource count doesn't match expectations
+- For any resource that already exists in Azure (rather than being created fresh), always run `terraform plan` immediately after import and treat anything other than "No changes" as something to resolve before `apply` — never apply blind against a live resource
