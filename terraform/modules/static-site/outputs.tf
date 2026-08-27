@@ -3,13 +3,13 @@
 
 output "default_hostname" {
     description = "the auto-generated *.azurestaticapps.net hostname"
-    value       = azurerm_static_site.main.default_host_name
+    value       = azurerm_static_web_app.main.default_host_name
 }
 
 
 output "static_site_id" {
     description = "Resource ID of the Static Web App"
-    value       =  azurerm_static_site.main.id
+    value       =  azurerm_static_web_app.main.id
 }
 
 
