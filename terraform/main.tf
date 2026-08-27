@@ -27,3 +27,9 @@ module "monitoring" {
   subscription_id       = data.azurerm_subscription.current.subscription_id
 }
 
+module "static_site" {
+  source              = "./modules/static-site"
+  resource_group_name = "RSG-PersonalSite"
+  location            = "centralus"
+  site_name           = "OmarDevSec"
+}
