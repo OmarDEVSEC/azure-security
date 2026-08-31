@@ -33,3 +33,12 @@ module "static_site" {
   location            = "centralus"
   site_name           = "OmarDevSec"
 }
+
+module "storage" {
+  source              = "./modules/storage"
+  resource_group_name = azurerm_resource_group.SecLab.name
+  location            = azurerm_resource_group.SecLab.location
+  storage_account_name = "securestorageomardev"
+}
+
+
