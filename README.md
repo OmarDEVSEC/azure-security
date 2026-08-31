@@ -1,25 +1,7 @@
 # azure-security
 End-to-end Azure security modules: Deployed via Terraform, Defender for Cloud, KQL detection, and remediated through infrastructure as code.
 
-
-## Setup notes
-
-While configuring authenticatrion, 'az login' returned an 'AADSTS50076' error requiring MFA on the tenant.
-Seperately, the Azure subscription had moved to a 'Disabled' state after the free-tier credit expired.
-
-Fixed by the following:
-
-- Enrolling in Entra MFA through Azure portal
-- Upgrading the subscription to Pay-As-You-Go to reactivate it
-- Confirming 'az account show' returned an active, enabeld subscription before proceeding with Terraform
-
-This is also why the monitoring module (budget alerts, service health alerts) was deployed first, before any other lab infrastructure — to guard against unexpected spend now that the subscription is billing for real.
-
-
-
 # Monitoring Module
-
-## Monitoring Module
 
 The monitoring module provides subscription-wide cost and service health oversight, deployed independently from the lab infrastructure so it survives `terraform destroy` cycles on the resources being tested.
 
@@ -52,6 +34,7 @@ The original plan used `azurerm_static_site`, but the first `terraform plan` aft
 
 A running log of real issues hit during this project and how they were resolved — kept intentionally rather than only showing a clean end state.
 
+## Setup notes
 **MFA and subscription authentication**
 `az login` initially failed with `AADSTS50076`, requiring multi-factor authentication on the tenant. Separately, the Azure subscription had moved to a `Disabled` state after the free-tier credit expired.
 
