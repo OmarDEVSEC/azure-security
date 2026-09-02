@@ -15,6 +15,8 @@ variable "key_vault_name"{
     type        = string    
 }
 
+
+# New concept tenant_id: Key vault needs to know which Entra ID tenant governs access to it
 variable "tenant_id"{
     description = "Entra tenant ID that owns the key vault"
     type        = string
@@ -24,4 +26,9 @@ variable "sku_name"{
     description = "Pricing tier: standard or premium"
     type        =  string
     default     = "standard"
+}
+
+variable "assign_to_principal_id"{
+    description = "Object ID of the user/service prinicipal to grant KV amdin privilege"
+    type        =  string
 }
