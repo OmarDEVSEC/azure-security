@@ -48,3 +48,16 @@ Deploys a private-by-default storage account and blob container, intended later 
 - `container_access_type = "private"` — no anonymous read access
 
 This "secure by default" baseline is intentional — Phase 3 will deliberately weaken specific settings here to simulate a real misconfiguration, then Phase 4 will detect and remediate it back to this state via Terraform.
+
+
+### Key Vault Module
+ 
+Deploys an Azure Key Vault using RBAC-based authorization rather than the legacy access-policy model, aligned with Microsoft's current recommended approach for new vaults.
+ 
+**What it deploys:**
+- **Key Vault** — `standard` SKU, RBAC authorization enabled, purge protection disabled (appropriate for a lab environment that gets recreated between sessions — production vaults should enable this)
+- **Role Assignment** — grants the deploying user the `Key Vault Administrator` role, scoped to this vault, using the signed-in user's object ID read automatically via `data "azurerm_client_config"`
+**Design decisions:**
+- RBAC over access policies from the start — avoids taking on the legacy model only to migrate away from it later
+- `purge_protection_enabled = false` — lets the vault be fully destroyed and recreated during lab iteration; would be flipped to `true` in a production configuration
+ 

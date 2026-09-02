@@ -79,3 +79,47 @@ Resolved by referencing the resource group's real attributes directly (`azurerm_
 - `terraform validate` is the authoritative check when an editor's inline error panel (e.g. VS Code's Terraform extension) shows stale or conflicting errors after a file edit
 - Empty module files can pass `terraform init` and `validate` cleanly while producing an incomplete `plan` — worth directly `cat`-ing files to confirm actual saved content when a plan's resource count doesn't match expectations
 - For any resource that already exists in Azure (rather than being created fresh), always run `terraform plan` immediately after import and treat anything other than "No changes" as something to resolve before `apply` — never apply blind against a live resource
+
+## Key Vault RBAC argument — provider version confusion
+ 
+While configuring `azurerm_key_vault` for RBAC authorization, an error suggested the required argument was `rbac_authorization_enabled`:
+```
+Error: Missing required argument
+The argument "rbac_authorization_enabled" is required, but no definition was found.
+```
+Using that name produced the opposite error:
+```
+Error: Unsupported argument
+An argument named "rbac_authorization_enabled" is not expected here.
+```
+The contradiction was resolved by confirming the exact installed provider version:
+```bash
+terraform version
+# + provider registry.terraform.io/hashicorp/azurerm v3.117.1
+```
+The property was renamed from `enable_rbac_authorization` to `rbac_authorization_enabled` starting in provider version **4.42.0**. On `v3.117.1`, only the original name is valid:
+```hcl
+resource "azurerm_key_vault" "main" {
+  # ...
+  enable_rbac_authorization = true
+  purge_protection_enabled  = false
+}
+```
+ 
+Lesson: when an error message references an argument name that itself then fails, don't trust the error's wording alone — confirm the exact provider version with `terraform version` and check which argument name applies to that specific version before changing code again. This is the second time in this project a provider version boundary (see also: the `azurerm_storage_container` argument change) has been the actual root cause behind a confusing error.
+ 
+## Missing variable declaration — Key Vault role assignment
+ 
+`main.tf` referenced `var.assign_to_principal_id` in the `azurerm_role_assignment` resource, but the corresponding `variable "assign_to_principal_id" {}` block wasn't present in `variables.tf`, producing:
+```
+Error: Reference to undeclared input variable
+```
+Resolved by adding the missing declaration to `modules/keyvault/variables.tf`:
+```hcl
+variable "assign_to_principal_id" {
+  description = "Object ID of the user/service principal to grant Key Vault Administrator access"
+  type        = string
+}
+```
+Same category of issue as the earlier empty `modules/monitoring/main.tf` case — a resource referencing a variable that was never actually declared/saved in the module's `variables.tf`.
+ 
