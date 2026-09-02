@@ -42,3 +42,14 @@ module "storage" {
 }
 
 
+data "azurerm_client_config" "current"{}
+
+module "keyvault" {
+  source              = "./modules/keyvault"
+  resource_group_name = azurerm_resource_group.SecLab.name
+  location            = azurerm_resource_group.SecLab.location
+  key_vault_name      = "omarazureseckv"
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  assign_to_principal_id = data.azurerm_client_config.current.object_id
+}
+
