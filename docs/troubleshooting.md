@@ -123,3 +123,21 @@ variable "assign_to_principal_id" {
 ```
 Same category of issue as the earlier empty `modules/monitoring/main.tf` case — a resource referencing a variable that was never actually declared/saved in the module's `variables.tf`.
  
+
+ ## Logging module — running Terraform from inside the module folder (recurring issue)
+ 
+`terraform plan` was run from inside `modules/logging/` rather than the project root, producing an interactive prompt for `location` and later an error that `workspace_name` was "not set" at the root module level. This is the same root cause as the earlier storage module issue: a module folder has no provider configuration of its own, so running Terraform commands from inside one causes it to be misread as a standalone root config.
+ 
+Resolved the same way as before — confirming the working directory with `pwd` and returning to the project root (`azure-security/terraform`) before running any Terraform command.
+ 
+Noted as a recurring pattern rather than a one-off: worth building the habit of running `pwd` automatically before any `terraform` command, especially right after `cd`-ing into a module folder to create files.
+ 
+## Typo — `azurerm_resource_group_name` vs `azurerm_resource_group`
+ 
+The `module "logging"` block in root `main.tf` referenced a resource type `azurerm_resource_group_name`, which doesn't exist — the actual resource type is `azurerm_resource_group`, with `.name` as an attribute read on it, not part of the type name itself:
+```
+Error: Reference to undeclared resource
+A managed resource "azurerm_resource_group_name" "SecLab" has not been declared in the root module.
+```
+Resolved by correcting the reference to `azurerm_resource_group.SecLab.name` (and the equivalent `.location` reference below it).
+ 

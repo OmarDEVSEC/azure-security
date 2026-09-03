@@ -61,3 +61,14 @@ Deploys an Azure Key Vault using RBAC-based authorization rather than the legacy
 - RBAC over access policies from the start — avoids taking on the legacy model only to migrate away from it later
 - `purge_protection_enabled = false` — lets the vault be fully destroyed and recreated during lab iteration; would be flipped to `true` in a production configuration
  
+### Logging Module
+ 
+Deploys a Log Analytics workspace that will serve as the central destination for diagnostic settings across every other resource in the project, starting in Phase 2.
+ 
+**What it deploys:**
+- **Log Analytics Workspace** — `PerGB2018` SKU (standard pay-as-you-go pricing tier), 30-day retention (the free-included retention period)
+**Design decisions:**
+- Built before Phase 2's hardening work, since diagnostic settings on storage, Key Vault, and other resources need a workspace to send logs to before they can be configured
+- Kept in the lab resource group (`rg-azure-security`) rather than the monitoring resource group — this workspace holds resource-level telemetry tied to the lab environment's lifecycle, distinct from the subscription-wide cost/health alerting in `rg-monitoring`
+- Exposes `workspace_id` as a module output so future modules (diagnostic settings in Phase 2, KQL detections in Phase 4) can reference it without a separate lookup
+ 
