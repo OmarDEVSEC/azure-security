@@ -71,4 +71,22 @@ Deploys a Log Analytics workspace that will serve as the central destination for
 - Built before Phase 2's hardening work, since diagnostic settings on storage, Key Vault, and other resources need a workspace to send logs to before they can be configured
 - Kept in the lab resource group (`rg-azure-security`) rather than the monitoring resource group — this workspace holds resource-level telemetry tied to the lab environment's lifecycle, distinct from the subscription-wide cost/health alerting in `rg-monitoring`
 - Exposes `workspace_id` as a module output so future modules (diagnostic settings in Phase 2, KQL detections in Phase 4) can reference it without a separate lookup
- 
+
+### Compute Module
+
+Deploys the VM that will serve as the Phase 3 attack surface — a full VNet, subnet, NSG, static public IP, NIC, and Ubuntu Linux VM, all provisioned together in one module since they're tightly coupled.
+
+**What it deploys:**
+- **Virtual Network** (`10.10.0.0/16`) with a single subnet (`10.10.1.0/24`)
+- **Network Security Group** — inbound SSH (port 22) allowed only from a single admin IP (`/32`), deny-by-default for everything else
+- **Static Public IP** (Standard SKU)
+- **Linux VM** — Ubuntu 22.04 LTS, `Standard_B1s`, SSH-key-only authentication (password auth disabled), RSA key pair required
+
+**Security baseline set at creation:**
+- `disable_password_authentication = true` — no password login surface at all
+- NSG scoped to a single source IP rather than the internet — this is the control Phase 3 will deliberately weaken (widening to `0.0.0.0/0`) to simulate a real misconfiguration
+- RSA key (not ed25519) — required by Azure's VM provisioning agent for the initial SSH key injection
+
+**Region note:** deployed to `denmarkeast`, not the project's default `centralus` — the subscription is restricted from deploying VMs and networking resources into most mainstream regions (see [troubleshooting log](docs/troubleshooting.md)). All six compute resources (VNet, subnet, NSG, NSG association, public IP, NIC, VM) live together in `denmarkeast`; other modules (storage, Key Vault, logging) remain in `centralus`, since a resource group's location does not require every resource inside it to share that region.
+
+**Verified working:** SSH access confirmed from the allowed source IP using the RSA key; VM deallocated (`az vm deallocate`) immediately after verification to stop compute billing while not in active use.

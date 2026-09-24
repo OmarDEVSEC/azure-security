@@ -140,4 +140,51 @@ Error: Reference to undeclared resource
 A managed resource "azurerm_resource_group_name" "SecLab" has not been declared in the root module.
 ```
 Resolved by correcting the reference to `azurerm_resource_group.SecLab.name` (and the equivalent `.location` reference below it).
- 
+
+## Compute module — quoted references instead of interpolation
+
+The `azurerm_subnet` resource in `modules/compute/main.tf` had its cross-references written as literal strings instead of interpolated values:
+```hcl
+resource_group_name  = "var.resource_group_name"
+virtual_network_name = "azurerm_virtual_network.main.name"
+```
+`terraform plan` showed these as plain text rather than `(known after apply)`, which would have caused `apply` to fail — Terraform would have tried to create the subnet inside a resource group literally named `"var.resource_group_name"`, which doesn't exist.
+
+Resolved by removing the surrounding quotes so both lines are real references, not strings:
+```hcl
+resource_group_name  = var.resource_group_name
+virtual_network_name = azurerm_virtual_network.main.name
+```
+Lesson: always check `plan` output for suspiciously literal-looking values on attributes that should read `(known after apply)` — quoted references are easy to introduce by habit when every other line in a `.tf` file legitimately uses quotes for string literals.
+
+## VM SKU capacity — `SkuNotAvailable`
+
+`terraform apply` failed while creating the VM:
+```
+Error: SkuNotAvailable: The requested VM size for resource 'Following SKUs have failed for Capacity Restrictions: Standard_B1s' is currently not available in location 'centralus'.
+```
+Switching to `Standard_B1ms` produced the identical error, ruling out a size-specific problem.
+
+Investigated with:
+```bash
+az vm list-skus --size Standard_B1s --all --output table
+```
+This revealed the real cause: the subscription (recently upgraded from a free trial to Pay-As-You-Go) is restricted with `NotAvailableForSubscription` on nearly every mainstream region — `centralus`, `eastus`, `eastus2`, `westus2`, etc. — for `Standard_B1s`. Only a small set of regions showed `None` (no restriction): `DenmarkEast`, `IndiaSouthCentral`, `EastUS3`, `SoutheastUS`, `SouthCentralUS2`, `SaudiArabiaEast`, `WestCentralUSFRE`, among a few others.
+
+This is a temporary, common restriction Azure applies to subscriptions with limited billing history, not a project misconfiguration. It's expected to lift on its own as the subscription accrues payment history.
+
+## Region supports the VM size but not core networking
+
+Switching to `eastus3` (one of the unrestricted regions from the SKU list) let the VM size validate, but `terraform apply` then failed creating the VNet, NSG, and public IP:
+```
+Error: LocationNotAvailableForResourceType: The provided location 'eastus3' is not available for resource type 'Microsoft.Network/virtualNetworks'.
+```
+The error's own region list confirmed `eastus3` isn't in Azure's supported list for `Microsoft.Network/*` resource types at all — it's a specialized/limited-availability region, not a general-purpose one.
+
+Resolved by cross-referencing the SKU-availability list against Azure's networking-capable region list and choosing **`denmarkeast`**, which satisfies both. Since the whole compute module (VNet through VM) had already partially applied in `centralus` and then `eastus3` before this fix, changing `location` forced Terraform to destroy and recreate all 5 networking resources plus add the VM (`Plan: 6 to add, 0 to change, 5 to destroy`) — safe to apply, since no VM had ever successfully finished deploying and nothing of value existed yet.
+
+Lesson: a region appearing in a SKU availability list only confirms compute capacity for that VM size — it says nothing about whether that same region supports the other resource types (networking, storage, etc.) the deployment also needs. Both need independent verification for an unfamiliar or restricted region.
+
+## Compute module — confirmed working
+
+After the region fix, `terraform apply` completed successfully: VNet, subnet, NSG, NSG association, public IP, NIC, and VM all provisioned in `denmarkeast`. SSH access confirmed using the RSA key from the allowed source IP, then the VM was deallocated (`az vm deallocate`) to stop compute billing while not in active use — the public IP and OS disk continue to bill at a small fixed rate regardless of VM power state, so a full `terraform destroy` of the compute module is the only way to reach zero cost during extended breaks.
