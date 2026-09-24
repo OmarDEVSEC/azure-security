@@ -9,8 +9,8 @@ resource "azurerm_virtual_network" "main"{
 
 resource "azurerm_subnet" "main"{
     name                 = "subnet-azsec"
-    resource_group_name  = "var.resource_group_name"
-    virtual_network_name = "azurerm_virtual_network.main.name"
+    resource_group_name  = var.resource_group_name
+    virtual_network_name = azurerm_virtual_network.main.name
     address_prefixes     = ["10.10.1.0/24"]
 }
 
