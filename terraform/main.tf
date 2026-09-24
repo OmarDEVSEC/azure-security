@@ -64,7 +64,7 @@ module "logging" {
 module "compute" {
   source                = "./modules/compute"
   resource_group_name   = azurerm_resource_group.SecLab.name
-  location              = azurerm_resource_group.SecLab.location
+  location              = "eastus3"
   ssh_public_key        = file ("~/.ssh/azsec-lab-rsa.pub")
   allowed_ssh_source_ip = "104.12.201.55/32" 
 }                                                                                                                                                    
