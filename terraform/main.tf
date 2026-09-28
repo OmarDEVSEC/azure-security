@@ -67,4 +67,12 @@ module "compute" {
   location              = "denmarkeast"
   ssh_public_key        = file ("~/.ssh/azsec-lab-rsa.pub")
   allowed_ssh_source_ip = "104.12.201.55/32" 
-}                                                                                                                                                    
+}  
+
+module "hardening"{
+  source                     = "./modules/hardening"
+  log_analytics_workspace_id = module.logging.workspace_id
+  storage_account_id         = module.storage.storage_account_id
+  key_vault_id               = module.keyvault.key_vault_id
+  nsg_id                     = module.compute.nsg_id
+}
