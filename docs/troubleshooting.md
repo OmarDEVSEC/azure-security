@@ -188,3 +188,74 @@ Lesson: a region appearing in a SKU availability list only confirms compute capa
 ## Compute module — confirmed working
 
 After the region fix, `terraform apply` completed successfully: VNet, subnet, NSG, NSG association, public IP, NIC, and VM all provisioned in `denmarkeast`. SSH access confirmed using the RSA key from the allowed source IP, then the VM was deallocated (`az vm deallocate`) to stop compute billing while not in active use — the public IP and OS disk continue to bill at a small fixed rate regardless of VM power state, so a full `terraform destroy` of the compute module is the only way to reach zero cost during extended breaks.
+
+docs/troubleshooting.md addition
+markdown
+## Hardening module — missing module output ("object with no attributes")
+
+`terraform plan` failed on the new `module "hardening"` block:
+
+Error: Unsupported attribute
+
+on main.tf line 75, in module "hardening":
+75: storage_account_id = module.storage.storage_account_id
+├────────────────
+│ module.storage is object with no attributes
+
+This object does not have an attribute named "storage_account_id".
+
+The cause wasn't the `hardening` module's code — it was that `modules/storage/outputs.tf` didn't exist yet. The Storage module had been created and applied back in Phase 1 without ever declaring any outputs, since nothing needed to consume its values at the time. With zero outputs declared, Terraform correctly treats `module.storage` as an object with no attributes, so any reference to `module.storage.<anything>` fails the same way regardless of what's inside the referencing module.
+
+Resolved by creating `modules/storage/outputs.tf` with the needed outputs (`storage_account_id`, `storage_account_name`, `primary_blob_endpoint`, `container_name`).
+
+Lesson: a module only exposes what its own `outputs.tf` declares — adding a new module that *consumes* another module's resource means checking that the other module actually exports it first, not assuming it does because the resource exists.
+
+## Resource type typo — `azurerm_secruity_center_subscription_pricing`
+
+Error: Invalid resource type
+
+on modules/hardening/main.tf line 1, in resource "azurerm_secruity_center_subscription_pricing" "vm":
+1: resource "azurerm_secruity_center_subscription_pricing" "vm"{
+
+The provider hashicorp/azurerm does not support resource type "azurerm_secruity_center_subscription_pricing". Did
+you mean "azurerm_security_center_subscription_pricing"?
+
+Transposed letters in "security." Resolved by correcting to `azurerm_security_center_subscription_pricing` — Terraform's own suggestion matched exactly.
+
+## Deprecated `log` block → `enabled_log`
+
+`terraform plan` warned on both the Key Vault and NSG diagnostic settings:
+
+Warning: Argument is deprecated
+log has been superseded by enabled_log and will be removed in version 4.0 of the AzureRM Provider.
+
+Not blocking, but fixed immediately since it's a straight syntax swap. `enabled_log` doesn't take an `enabled = true` line the way `log` did — the block's presence alone means it's active:
+```hcl
+enabled_log {
+  category = "AuditEvent"
+}
+```
+## Storage logging — metrics vs. logs live on different resource IDs
+
+The first storage diagnostic setting only configured a `metric` block and left logging out entirely — easy to miss since every other resource in this module (Key Vault, NSG) needed just one `azurerm_monitor_diagnostic_setting` block covering both logs and metrics together.
+
+Storage accounts don't work that way: the top-level `Microsoft.Storage/storageAccounts` resource only supports metric categories (`Transaction`, `Capacity`) — it has no log categories at all. Blob read/write/delete logging only exists on the blob service sub-resource, reached with a resource ID of `"${storage_account_id}/blobServices/default/"`, not the storage account ID itself.
+
+Resolved by adding a second `azurerm_monitor_diagnostic_setting` resource (`storage_blob`) targeting that sub-resource path, alongside the original account-level one (left unchanged for metrics).
+
+While fixing this, a typo on the first apply attempt —
+
+Error: creating Monitor Diagnostics Setting "diag-storage-blob" ...: unexpected status 400 (400 Bad Request)
+with response: {"code":"BadRequest","message":"Category 'StorageDelet' is not supported."}
+
+— was a dropped letter in `"StorageDelet"`, caught immediately by Azure's own 400 response rather than at `plan` time, since category name validity for a diagnostic setting is checked against the live API, not against the provider schema. Resolved by correcting to `"StorageDelete"`.
+
+Lesson: same family of issue as the Static Web App's deprecated resource type and the Key Vault RBAC argument rename — don't assume a resource type's sub-resources share the same capabilities as the parent. Check Azure's documentation for which categories/resource scope a diagnostic setting actually supports before assuming one setting covers everything.
+
+## VM agent drift — `vm_agent_platform_updates_enabled`
+
+An `apply` for an unrelated change (adding the hardening module) also showed an in-place update to the already-deployed Compute module's VM:
+
+~ vm_agent_platform_updates_enabled = true -> false
+
+Nothing in `modules/compute/` was touched. This is drift between the provider's current default for that argument and the value Azure had set on the live VM — not a configuration problem, and not destructive. Applied as-is; noted here since the Compute module was otherwise considered "done" after SSH verification, and it's worth remembering that a live VM resource can still show incidental drift on unrelated `apply` runs.
