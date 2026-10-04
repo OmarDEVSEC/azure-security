@@ -61,7 +61,7 @@ resource "azurerm_monitor_diagnostic_setting" "storage_blob" {
   }
 
   enabled_log {
-    category = "StorageDelet"
+    category = "StorageDelete"
   }
 
   metric {
