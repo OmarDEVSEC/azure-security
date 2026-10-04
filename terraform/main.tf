@@ -75,4 +75,5 @@ module "hardening" {
   storage_account_id         = module.storage.storage_account_id
   key_vault_id               = module.keyvault.key_vault_id
   nsg_id                     = module.compute.nsg_id
+  enable_defender            = false
 }
