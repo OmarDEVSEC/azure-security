@@ -45,3 +45,26 @@ resource "azurerm_monitor_diagnostic_setting" "nsg" {
 
   }
 }
+
+#Diagnostic setting for storage account blob service
+
+resource "azurerm_monitor_diagnostic_setting" "storage_blob" {
+  name                       = "diag-storage-blob"
+  target_resource_id         = "${var.storage_account_id}/blobServices/default/"
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+
+  enabled_log {
+    category = "StorageRead"
+  }
+  enabled_log {
+    category = "StorageWrite"
+  }
+
+  enabled_log {
+    category = "StorageDelet"
+  }
+
+  metric {
+    category = "Transaction"
+  }
+}
