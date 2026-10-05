@@ -90,3 +90,98 @@ Deploys the VM that will serve as the Phase 3 attack surface — a full VNet, su
 **Region note:** deployed to `denmarkeast`, not the project's default `centralus` — the subscription is restricted from deploying VMs and networking resources into most mainstream regions (see [troubleshooting log](docs/troubleshooting.md)). All six compute resources (VNet, subnet, NSG, NSG association, public IP, NIC, VM) live together in `denmarkeast`; other modules (storage, Key Vault, logging) remain in `centralus`, since a resource group's location does not require every resource inside it to share that region.
 
 **Verified working:** SSH access confirmed from the allowed source IP using the RSA key; VM deallocated (`az vm deallocate`) immediately after verification to stop compute billing while not in active use.
+
+### Hardening Module
+
+Deploys diagnostic settings and Defender for Cloud, wiring every other module's resources into the central Log Analytics workspace built in the Logging module. This is Phase 2's main deliverable — turning on visibility before Phase 3 introduces a deliberate misconfiguration to detect.
+
+**What it deploys:**
+- **Diagnostic Settings** — one per monitored resource, each sending logs/metrics to the Log Analytics workspace:
+  - **Key Vault** — `AuditEvent` logs, `AllMetrics`
+  - **NSG** — `NetworkSecurityGroupEvent` and `NetworkSecurityGroupRuleCounter` logs
+  - **Storage Account** — `Transaction` metrics at the account level, plus a separate setting at the blob service sub-resource (`.../blobServices/default/`) for `StorageRead`, `StorageWrite`, and `StorageDelete` logs
+- **Defender for Cloud** — Standard tier pricing for VMs, gated behind `var.enable_defender` (default `false`) so it's never turned on — and billing — by accident
+
+**Design decisions:**
+- Built as its own module rather than folded into `logging/`, `storage/`, or `keyvault/` — diagnostic settings *point from* other resources *to* the workspace, the reverse dependency direction of the modules that own those resources, so they read cleaner kept separate
+- Consumes `storage_account_id`, `key_vault_id`, `nsg_id`, and `log_analytics_workspace_id` as module outputs from Phase 1's modules rather than re-querying Azure with data sources — this is why those outputs existed in advance
+- `enable_defender` defaults to `false` since Defender Standard tier is a real ongoing per-VM cost, consistent with the cost-discipline pattern already set by `rg-monitoring`
+- No `outputs.tf` — nothing downstream currently consumes a value produced by this module
+
+**Storage Account diagnostic settings — two resources, not one:** Unlike Key Vault and NSG, a storage account's top-level resource only supports *metrics* (`Transaction`, `Capacity`); the actual read/write/delete *log* categories only exist at the blob service sub-resource level. This is why the Storage Account has two separate `azurerm_monitor_diagnostic_setting` resources targeting two different resource IDs, where every other resource in this module needed only one.
+
+# Attack A: Public Blob Exposure (Storage Account)
+
+## Objective
+
+Simulate a common cloud misconfiguration (a storage container made publicly readable) against the Phase 1 storage module, then confirm that the Phase 2 diagnostic logging captures both the misconfiguration and the data access it enables. This run is the baseline for the Phase 4 KQL detections.
+
+**MITRE ATT&CK:** T1530, Data from Cloud Storage.
+
+## Starting state (secure baseline)
+
+- Storage account `securestorageomardev` with `allow_nested_items_to_be_public = false`
+- Container `privatedata` with `container_access_type = "private"`
+- Blob read/write/delete logging (`StorageRead`, `StorageWrite`, `StorageDelete`) sent to `law-azure-security` via a diagnostic setting on the blob service
+
+## The misconfiguration
+
+Two changes in `modules/storage/main.tf`, applied with Terraform:
+
+| Setting | Before | After |
+|---|---|---|
+| `allow_nested_items_to_be_public` (account) | `false` | `true` |
+| `container_access_type` (container) | `private` | `blob` |
+
+Both changes are needed. The account-level flag overrides the container setting, which is the defense-in-depth built in Phase 1. Attacker access required defeating both layers, and that is also what a careless "just make it public" change does in practice.
+
+## Attack steps
+
+1. Uploaded a CSV of names, SSNs and card numbers (`AzureSecSensitiveinfo.csv`) to the `privatedata` container, authenticated with the account key. [Confirm: synthetic test data.]
+2. **Before the change:** requested the blob anonymously with `curl`. Azure refused with `PublicAccessNotPermitted`.
+3. Applied the two Terraform changes above.
+4. **After the change:** repeated the anonymous request. The full file contents came back with no credentials.
+5. Repeated the anonymous read to generate several events (10 anonymous reads in total).
+
+## Evidence timeline (from `StorageBlobLogs`)
+
+| Time (UTC) | Operation | Auth type | Status | Meaning |
+|---|---|---|---|---|
+| 2:24:35 PM | `PutBlob` | AccountKey | 201 | File uploaded |
+| 2:25:56 PM | `GetBlob` | Anonymous | **409** | Anonymous read blocked (hardened baseline) |
+| 2:28:29 PM | `SetContainerACL` | AccountKey | 200 | **Misconfiguration applied** (container made public) |
+| 2:28:53 PM | `GetBlob` | Anonymous | **200** | First successful unauthenticated read, 24 seconds after the change |
+| 2:30:22 to 2:32:37 PM | `GetBlob` | Anonymous | 200 | Nine further anonymous reads |
+
+All anonymous requests came from `104.12.201.55`, the operator's own address, since this was a self-run simulation.
+
+**Screenshots:**
+
+![Terraform change and anonymous curl returning file contents](docs/AzureAttackA/AzSensitiveInfoBlobUpload.png)
+*The Terraform change (`allow_nested_items_to_be_public = true`, annotated "Was false") and the anonymous `curl` returning file contents.*
+
+![Log timeline from upload through the first anonymous read](docs/AzureAttackA/AzSensitiveInfoBlobUpload2.png)
+*Log timeline from upload through the first anonymous read.*
+
+![The full set of anonymous GetBlob reads](docs/AzureAttackA/AzSensitiveInfoBlobUpload3.png)
+*The full set of anonymous `GetBlob` reads, with one row expanded.*
+
+## Detection signals identified for Phase 4
+
+1. **`SetContainerACL`**: a change to container access control. This is the early warning and fires before any data is read. Alert on any change, or on a change that sets public access.
+2. **`GetBlob` with `AuthenticationType == "Anonymous"` and `StatusCode == 200`**: confirmed data exposure, and the higher-severity signal.
+3. **Anonymous `GetBlob` with `409`**: probing against a hardened account. A burst of these is reconnaissance and worth a lower-severity alert.
+
+**Noise to exclude:** `TrustedAccess` rows from `10.0.31.157` are Azure platform polling, and `GetBlobServiceProperties` and `GetContainerProperties` rows with `AccountKey` are the Terraform provider checking state.
+
+**Gap noted:** the storage-account-level change (`allow_nested_items_to_be_public`) is a control-plane write, so it should appear in `AzureActivity`. It isn't captured in these screenshots and should be verified there.
+
+## Remediation
+
+Both settings were reverted in Terraform (`allow_nested_items_to_be_public = false`, `container_access_type = "private"`) and re-applied. A repeat anonymous `curl` returned `PublicAccessNotPermitted` at 2:56 PM, confirming the exposure is closed. The exposure window was about 28 minutes at most (2:28 PM to before 2:56 PM).
+
+## Findings and lessons
+
+- Logging worked end to end: both the misconfiguration (`SetContainerACL`) and the resulting data access (anonymous `GetBlob`) were captured within minutes.
+- The two-layer control did its job. Public access required changing both settings, so the audit trail for this kind of exposure should expect both changes.
+- The earliest detectable event is the ACL change, not the first read. A detection built only on reads fires after data has already been exposed.

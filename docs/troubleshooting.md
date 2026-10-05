@@ -259,3 +259,79 @@ An `apply` for an unrelated change (adding the hardening module) also showed an 
 ~ vm_agent_platform_updates_enabled = true -> false
 
 Nothing in `modules/compute/` was touched. This is drift between the provider's current default for that argument and the value Azure had set on the live VM — not a configuration problem, and not destructive. Applied as-is; noted here since the Compute module was otherwise considered "done" after SSH verification, and it's worth remembering that a live VM resource can still show incidental drift on unrelated `apply` runs.
+
+## Attack A — plan shows 0 to add for a resource that was already applied
+
+While preparing Attack A, the Activity Log diagnostic setting (`activity_log`) had been added to `modules/hardening/main.tf`, but `terraform plan` reported `0 to add, 5 to change` with no mention of it.
+
+Checked state directly instead of re-reading the code:
+```bash
+terraform state list | grep activity_log
+# module.hardening.azurerm_monitor_diagnostic_setting.activity_log
+```
+The resource was already in state. It had been applied in an earlier run, so a plan correctly had nothing to add.
+
+Lesson: "0 to add" doesn't mean a resource is missing from the config. It can mean the resource is already applied. When a plan doesn't match expectations, `terraform state list` is the fastest way to tell "not in config" from "already in state."
+
+## Azure CLI — `--auth-mode` typo and broken line continuations
+
+Uploading the test file failed:
+
+az storage blob upload: 'mode' is not a valid value for '--auth-mode'. Allowed values: login, key.
+
+Two causes:
+- The flag was typed `--auth mode key` (space instead of a hyphen). The CLI accepts `--auth` as an abbreviation of `--auth-mode`, so it read `mode` as that flag's value
+- The multi-line command with `\` line continuations was pasted as a single line, and a later edit also ran two arguments together (`AzureSecSensitiveinfo.csv--auth-mode`), so the CLI parsed them as one filename
+
+Resolved by running the command as a single line with correct flag names and spacing:
+```bash
+az storage blob upload --account-name securestorageomardev --container-name privatedata --name AzureSecSensitiveinfo.csv --file AzureSecSensitiveinfo.csv --auth-mode key
+```
+Lesson: `\` continuations only work when each part sits on its own line. For pasted commands, use a single line. And an error that names a valid flag with a wrong value usually means a flag name was split or abbreviated by accident.
+
+## Plan is not apply — `PublicAccessNotPermitted` after the "change"
+
+The first anonymous `curl` after the attack change still failed:
+
+<Error><Code>PublicAccessNotPermitted</Code><Message>Public access is not permitted on this storage account.
+
+The Terraform change (`allow_nested_items_to_be_public = true`, container `private -> blob`) had been previewed with `terraform plan` but not yet applied. Checking live state confirmed it:
+```bash
+az storage account show --name securestorageomardev --resource-group rg-azure-security --query allowBlobPublicAccess
+# false
+```
+Resolved by running `terraform apply` from the project root. After that, the same check returned `true` and the anonymous read succeeded.
+
+Lesson: when a result contradicts the code, check live state with the Azure CLI before assuming a propagation delay. `plan` previews a change and only `apply` makes it.
+
+## A test that fails for the wrong reason proves nothing
+
+After reverting Attack A, the verification `curl` failed:
+
+curl: (7) Failed to connect to securestorageomardev.blob.core.winows.net port 443
+
+The URL had a typo (`winows.net` instead of `windows.net`). The failure was a connection error against a hostname that doesn't exist, not an answer from Azure, so it said nothing about whether the revert worked. Re-running with the correct URL returned the expected `PublicAccessNotPermitted` response from Azure itself.
+
+Lesson: a verification only counts if it fails (or passes) for the intended reason. An error body from the service, such as an Azure XML error, is evidence. A DNS or connection error is not.
+
+## Recurring plan noise — diagnostic settings and VM agent drift
+
+Every `plan` during this phase showed in-place changes that weren't part of the work:
+- **Diagnostic settings** (`storage`, `storage_blob`): Terraform removed and re-added the `Transaction` metric block, and dropped a `Capacity` block (`enabled = false`) plus empty `retention_policy` blocks. Azure returns default fields the config doesn't declare, so Terraform keeps trying to reconcile them. Cosmetic and harmless
+- **VM** (`vm_agent_platform_updates_enabled = true -> false`): this appeared on every plan and reappeared after an apply that reported success, because Azure keeps the live value at `true`. Setting `vm_agent_platform_updates_enabled = true` explicitly in the compute module matches reality and should end the recurring diff. [Status: confirm whether this was applied]
+
+Lesson: persistent plan diffs on unchanged resources are provider-versus-API default mismatches. Understand them once and note them, so that a real change is easy to spot among them.
+
+## README screenshots not rendering
+
+Screenshots added to the Attack A section showed as plain text in the README preview:
+```markdown
+- `/docs/AzureAttackA/AzSensitiveInfoBlobUpload.png`: the Terraform change...
+```
+Two causes: the paths were wrapped in backticks (rendered as inline code, not images), and they began with a leading slash, which points at the drive root in local previews.
+
+Resolved by using Markdown image syntax with a path relative to the README:
+```markdown
+![alt text](docs/AzureAttackA/AzSensitiveInfoBlobUpload.png)
+```
+Lesson: `![alt](path)` embeds an image. Backticks display the path as text. Relative paths without a leading slash render in both VS Code and GitHub.
