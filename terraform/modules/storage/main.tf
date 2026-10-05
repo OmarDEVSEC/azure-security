@@ -8,7 +8,7 @@ resource "azurerm_storage_account" "main" {
   account_replication_type = var.replication_type
 
   https_traffic_only_enabled      = true
-  allow_nested_items_to_be_public = false
+  allow_nested_items_to_be_public = false #Was false - for the purpose of the attack simulation (reverted back after attack A)
 
   tags = {
     project = "azure-security"
@@ -18,5 +18,5 @@ resource "azurerm_storage_account" "main" {
 resource "azurerm_storage_container" "main" {
   name                  = var.container_name
   storage_account_name  = azurerm_storage_account.main.name
-  container_access_type = "private"
+  container_access_type = "private" #Was private - changed to "blob" for the purpose of the attack simulation (reverted back after attack A)
 }

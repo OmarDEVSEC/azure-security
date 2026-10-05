@@ -68,3 +68,15 @@ resource "azurerm_monitor_diagnostic_setting" "storage_blob" {
     category = "Transaction"
   }
 }
+
+data "azurerm_subscription" "current" {}
+
+resource "azurerm_monitor_diagnostic_setting" "activity_log" {
+  name                       = "diag-activity-log"
+  target_resource_id         = data.azurerm_subscription.current.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+
+  enabled_log { category = "Administrative" }
+  enabled_log { category = "Security" }
+  enabled_log { category = "Policy" }
+}
