@@ -28,7 +28,7 @@ resource "azurerm_network_security_group" "main" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"
-    source_address_prefix      = var.allowed_ssh_source_ip
+    source_address_prefix      = var.allowed_ssh_source_ip ##Was changed it to 0.0.0.0 for the second attack - for the purpose of the attack simulation
     destination_address_prefix = "*"
   }
 }
