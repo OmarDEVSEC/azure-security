@@ -185,3 +185,80 @@ Both settings were reverted in Terraform (`allow_nested_items_to_be_public = fal
 - Logging worked end to end: both the misconfiguration (`SetContainerACL`) and the resulting data access (anonymous `GetBlob`) were captured within minutes.
 - The two-layer control did its job. Public access required changing both settings, so the audit trail for this kind of exposure should expect both changes.
 - The earliest detectable event is the ACL change, not the first read. A detection built only on reads fires after data has already been exposed.
+
+# Attack B: SSH Exposed to the Internet (Network Security Group)
+
+## Objective
+
+Simulate a second common cloud misconfiguration, a management port opened to the whole internet, against the Phase 1 compute module. The goal is to confirm which controls hold, which log records the change, and what Phase 4 detection can and can't see.
+
+**MITRE ATT&CK:** T1562.007, Disable or Modify Cloud Firewall (the rule change itself). The exposure it creates enables T1021.004, Remote Services: SSH.
+
+## Starting state (secure baseline)
+
+- NSG `nsg-azsec`, associated with the lab subnet, with one custom inbound rule, `allow_ssh_for_me`: TCP port 22, source restricted to the operator's single /32
+- VM `linux-vm-azsecurity` with password authentication disabled (SSH key only)
+- Subscription Activity Log sent to `law-azure-security` (Phase 2)
+
+## The misconfiguration
+
+One line in `modules/compute/main.tf` (line 31):
+
+| Setting | Before | After |
+|---|---|---|
+| `source_address_prefix` | `var.allowed_ssh_source_ip` (a /32) | `"0.0.0.0/0"` |
+
+`terraform plan` showed a single in-place change to the NSG's `security_rule`. The `-` line is the original /32 and the `+` line is `0.0.0.0/0`.
+
+![Terraform plan showing the source address change](docs/AzureAttackB/1-plan-diff.png)
+*The plan diff: the /32 removed, `0.0.0.0/0` added.*
+
+After apply, the portal shows the rule allowing SSH from any source:
+
+![NSG rule after the change, source 0.0.0.0/0](docs/AzureAttackB/2-nsg-after.png)
+*Portal view of `nsg-azsec` after the change: priority 100, port 22, TCP, source `0.0.0.0/0`, Allow.*
+
+## Attack steps
+
+1. Started the VM (it had been deallocated to stop compute billing)
+2. Applied the change. The exposure window opened at 8:30 PM CDT (1:30 AM UTC)
+3. Attempted an SSH login with a nonexistent username (`baduser`) and no valid key
+4. The attempt was refused with `Permission denied (publickey)`
+
+The test host was already inside the original /32, so this attempt would have reached the SSH service before the change too. It doesn't by itself prove external reachability. The exposure is established by the rule state, and the refused login shows what stood behind it.
+
+## Evidence timeline (from `AzureActivity`)
+
+Each operation logs three lifecycle entries (Start, Accept, Success). Filter on `ActivityStatusValue == "Success"` to avoid counting each change three times.
+
+| Time (UTC) | Local (CDT) | Operation | Status | Meaning |
+|---|---|---|---|---|
+| 1:30:03 AM, Oct 8 | 8:30 PM, Oct 7 | `MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/WRITE` | Success | **Misconfiguration applied** (SSH opened to `0.0.0.0/0`) |
+| 1:49:58 AM, Oct 8 | 8:49 PM, Oct 7 | `MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/WRITE` | Success | **Remediation applied** (restored to the /32) |
+
+![AzureActivity showing both NSG writes with their Start, Accept and Success entries](docs/AzureAttackB/4-activity-log.png)
+*Both writes against `nsg-azsec`, with the full Start, Accept and Success lifecycle visible. The Success rows are expanded.*
+
+## Detection signals identified for Phase 4
+
+1. **A successful `NETWORKSECURITYGROUPS/WRITE`** in `AzureActivity`. This is the reliable signal for this attack, and it fires at the moment the exposure begins.
+2. **Alert on the Success status only**, to avoid triple counts.
+3. **Caller-based filtering won't work in this lab.** Terraform runs under the operator's own account, so the caller looks the same for legitimate and malicious changes. Detection has to rely on what the rule says. The projected columns here don't include the rule contents, so Phase 4 needs to check the `Properties` field of the `AzureActivity` record for the written rule (source, port) to alert on management ports open to `0.0.0.0/0`.
+
+**Gaps found:**
+- The refused SSH login is **not visible in any log collected**. The VM has no monitoring agent, so its authentication log never reaches the workspace
+- The NSG diagnostic categories (`NetworkSecurityGroupEvent`, `NetworkSecurityGroupRuleCounter`) are legacy. [Fill in what the `AzureDiagnostics` query returned, or remove this line.]
+- Closing these gaps needs VNet flow logs (connection-level traffic) and Azure Monitor Agent forwarding the VM's auth syslog. Both are Phase 4 follow-ups
+
+## Remediation
+
+Line 31 was restored to `var.allowed_ssh_source_ip`, `terraform plan` showed the reverse diff, and `terraform apply` completed (`0 added, 4 changed, 0 destroyed`) at 8:49 PM CDT. `az network nsg rule show` then returned the original /32. [Confirm the VM was deallocated.] The exposure window was about 20 minutes (1:30:03 to 1:49:58 AM UTC).
+
+![Apply complete, followed by az confirming the rule is back to the single allowed address](docs/AzureAttackB/3-revert-verify.png)
+*Apply complete, then `az network nsg rule show` returning the original /32.*
+
+## Findings and lessons
+
+- Defense in depth worked: with the network layer fully open, key-only authentication still refused the login
+- The control that failed here is a single network rule, and its change is detectable only at the control plane. The earliest evidence is the NSG write, not any login attempt
+- Visibility into actual login attempts and traffic requires logging that wasn't in place. That is a concrete Phase 4 requirement, not an assumption
