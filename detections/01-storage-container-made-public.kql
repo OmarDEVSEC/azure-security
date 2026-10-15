@@ -1,0 +1,11 @@
+// Detection Purpose: Blob container Access Control List changed (could be possible exposure)
+// MITRE ATT&CK: T1530 (Data from Cloud Storage), precursor
+// Source: StorageBlobLogs (diag-storage-blob). Latency -10-15 min
+// Tuning: SetContainerACL is also what Terraform runs when you change access.
+// Compare caler/user agent against your normal apply and alert on unexpected ones.
+
+StorageBlobLogs
+| where TimeGenerated > ago(1h)
+| where OperationName == "SetContainerACL"
+| where StatusCode == 200
+| project TimeGenerated, AccountName, Uri, AuthenticationType, CallerIpAddress, UserAgentHeader, StatusCode 
