@@ -1,0 +1,16 @@
+// Detection Purpose: Anonymous requests being refused (for reconnaissance and probing)
+// Mitre ATT&CK: T1530 (discovery phase)
+// Severity: low. Threshold of 3 is a starting point, tuned to the baseline
+
+StorageBlobLogs
+| where TimeGenerated > ago(1h)
+| where AuthenticationType == "Anonymous"
+| extend ClientIp = tostring(split(CallerIpAddress, ":")[0])
+| where ClientIp !startswith "10.0.31."
+| summarize Refused   = countif(StatusCode in (403, 404, 409)),
+            Succeeded = countif(StatusCode == 200),
+            FirstSeen = min(TimeGenerated),
+            LastSeen  = max(TimeGenerated)
+          by ClientIp, AccountName
+| where Refused >= 1
+| extend Severity = iff(Succeeded > 0, "High: probe then read", "Low: probing only")

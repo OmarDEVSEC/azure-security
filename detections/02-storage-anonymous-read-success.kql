@@ -1,0 +1,15 @@
+// Detection purpose: Anonymous Blob read succeeded (data is actually exposed here)
+// MITRE ATTT&CK: T15230 (this is data from a cloud storage), precursor
+// Source: StorageBlobLogs (diag-storage-blob). Latency ~10-15 min
+// Tuning: SetContainerACL is also what Terraform runs when you change access.
+
+StorageBlobLogs
+| where TimeGenerated > ago(1h)
+| where OperationName == "GetBlob"
+| where AuthenticationType == "Anonymous"
+| where StatusCode == 200
+| extend ClientIp = tostring(split(CallerIpAddress, ":")[0])
+| where ClientIp !startswith "10.0.31."
+| summarize Reads = count(), DistinctBlobs = dcount(Uri),
+            FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+          by ClientIp, AccountName
