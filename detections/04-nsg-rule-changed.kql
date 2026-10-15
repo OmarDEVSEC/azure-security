@@ -1,0 +1,16 @@
+// Detection: Successful NSG or security rule write
+// MITRE ATT&CK: T1562.007 (Disable or Modify Cloud Firewall), enables T1021.004
+// Source: AzureActivity (diag-activity-log)
+// Note: filter on "Success". Start/Accept rows are not the change itself.
+// Next step: inspect Properties for the rule body (source, port) to alert only
+//   on 0.0.0.0/0 or Internet on 22/3389. Run the last line to see what is captured
+
+AzureActivity
+| where TimeGenerated > ago(1h)
+| where OperationNameValue has_any (
+    "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/WRITE",
+    "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/SECURITYRULES/WRITE")
+| where ActivityStatusValue == "Success"
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue,
+          _ResourceId, CorrelationId, Properties
+// | extend Body = parse_json(tostring(Properties_d.requestbody))
