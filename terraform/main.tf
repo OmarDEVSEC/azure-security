@@ -77,3 +77,11 @@ module "hardening" {
   nsg_id                     = module.compute.nsg_id
   enable_defender            = false
 }
+
+module "detection_alerts" {
+  source                     = "./modules/detection-alerts"
+  resource_group_name        = azurerm_resource_group.monitoring.name
+  location                   = azurerm_resource_group.monitoring.location
+  log_analytics_workspace_id = module.logging.workspace_id
+  action_group_id            = module.monitoring.action_group_id
+}
