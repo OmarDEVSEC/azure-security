@@ -6,7 +6,7 @@ locals {
       severity    = 2
     }
     storage_anonymous_read = {
-      file        = "02-storage-anonymous-read-success-.kql"
+      file        = "02-storage-anonymous-read-success.kql"
       description = "T1530: anonymous blob read succeeded"
       severity    = 1
     }
